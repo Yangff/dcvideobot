@@ -1,0 +1,19 @@
+{
+    "token": "[YOUR DISCORD TOKEN]",
+    "videoChannels": ["IDs copied from Voice channels"],
+    "commandChannels": ["Channels for bot commands"],
+    "adminIds": ["IDs of users who can use admin commands, there is no admin command yet"],
+    "movieFolder": "Folder where movies are stored",
+    "previewCache": "/tmp/preview-cache",
+    "streamOpts": {
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "bitrateKbps": 3000,
+        "hardware_acc": true
+    },
+    "server": {
+        "enabled": false,
+        "port": 8080
+    }
+}

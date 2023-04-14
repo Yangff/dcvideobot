@@ -1,0 +1,86 @@
+diff --git a/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.d.ts b/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.d.ts
+index 24b25f1..921bb3c 100644
+--- a/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.d.ts
++++ b/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.d.ts
+@@ -3,4 +3,4 @@ import ffmpeg from 'fluent-ffmpeg';
+ import { VoiceUdp } from '../client/voice/VoiceUdp';
+ import { Readable } from 'stream';
+ export declare let command: ffmpeg.FfmpegCommand;
+-export declare function streamLivestreamVideo(url: string | Readable, voiceUdp: VoiceUdp): Promise<string>;
++export declare function streamLivestreamVideo(url: string | Readable, voiceUdp: VoiceUdp, options: Map<string, string> | undefined): Promise<string>;
+diff --git a/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.js b/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.js
+index 4412713..d1b01f7 100644
+--- a/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.js
++++ b/node_modules/@dank074/discord-video-stream/dist/media/streamLivestreamVideo.js
+@@ -12,7 +12,7 @@ const audioStream_1 = require("./audioStream");
+ const fluent_ffmpeg_multistream_ts_1 = require("@dank074/fluent-ffmpeg-multistream-ts");
+ const StreamOpts_1 = require("../client/StreamOpts");
+ exports.command = undefined;
+-function streamLivestreamVideo(url, voiceUdp) {
++function streamLivestreamVideo(url, voiceUdp, options) {
+     return new Promise((resolve, reject) => {
+         const videoStream = new videoStream_1.VideoStream(voiceUdp);
+         const ivfStream = new ivfreader_1.IvfTransformer();
+@@ -42,18 +42,24 @@ function streamLivestreamVideo(url, voiceUdp) {
+         try {
+             exports.command = (0, fluent_ffmpeg_1.default)(url)
+                 .inputOption('-re')
+-                .addOption('-loglevel', '0')
++                //.addOption('-loglevel', '0')
+                 .addOption('-fflags', 'nobuffer')
+                 .addOption('-analyzeduration', '0')
+-                .on('end', () => {
++            if (options) {
++                // k,v loop
++                for (const [key, value] of Object.entries(options)) {
++                    exports.command.inputOption(key, value);
++                }
++            }
++            exports.command.on('end', () => {
+                 exports.command = undefined;
+                 resolve("video ended");
+             })
+                 .on("error", (err, stdout, stderr) => {
+                 exports.command = undefined;
+-                reject('cannot play video ' + err.message);
++                reject('cannot play video ');
+             })
+-                .on('stderr', console.error)
++                //.on('stderr', console.error)
+                 .output((0, fluent_ffmpeg_multistream_ts_1.StreamOutput)(ivfStream).url, { end: false })
+                 .noAudio()
+                 .size(`${StreamOpts_1.streamOpts.width}x${StreamOpts_1.streamOpts.height}`)
+diff --git a/node_modules/@dank074/discord-video-stream/src/media/streamLivestreamVideo.ts b/node_modules/@dank074/discord-video-stream/src/media/streamLivestreamVideo.ts
+index bd2bc9e..1d7d556 100644
+--- a/node_modules/@dank074/discord-video-stream/src/media/streamLivestreamVideo.ts
++++ b/node_modules/@dank074/discord-video-stream/src/media/streamLivestreamVideo.ts
+@@ -10,7 +10,7 @@ import { Readable } from 'stream';
+ 
+ export let command: ffmpeg.FfmpegCommand = undefined;
+ 
+-export function streamLivestreamVideo(url: string | Readable, voiceUdp: VoiceUdp) {
++export function streamLivestreamVideo(url: string | Readable, voiceUdp: VoiceUdp, options: Map<string, string> | undefined) {
+     return new Promise<string>((resolve, reject) => {
+         const videoStream: VideoStream = new VideoStream( voiceUdp);
+         
+@@ -51,9 +51,19 @@ export function streamLivestreamVideo(url: string | Readable, voiceUdp: VoiceUdp
+         try {
+             command = ffmpeg(url)
+             .inputOption('-re')
+-            .addOption('-loglevel', '0')
++            // .addOption('-loglevel', '0')
+             .addOption('-fflags', 'nobuffer')
+             .addOption('-analyzeduration', '0')
++            // add user options
++            if(options) {
++                // log
++                console.log("options:");
++                for (const [key, value] of options) {
++                    ///console.log(key + ": " + value);
++                    command.inputOption(key, value);
++                }
++            }
++            command
+             .on('end', () => {
+                 command = undefined;
+                 resolve("video ended")

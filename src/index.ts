@@ -1,20 +1,14 @@
 import { Client, TextChannel, CustomStatus, ActivityOptions } from "discord.js-selfbot-v13";
-import { command, streamLivestreamVideo, VoiceUdp, setStreamOpts, streamOpts } from "@dank074/discord-video-stream";
+//import { command, streamLivestreamVideo, VoiceUdp, setStreamOpts, streamOpts } from "@dank074/discord-video-stream";
+import { Streamer, Utils, prepareStream, playStream } from "@dank074/discord-video-stream";
+import ffmpeg from 'fluent-ffmpeg';
+
 import config from "./config.json";
 import fs from 'fs';
 import path from 'path';
 
 const client = new Client();
-
-client.patchVoiceEvents(); //this is necessary to register event handlers
-
-setStreamOpts(
-    config.streamOpts.width, 
-    config.streamOpts.height, 
-    config.streamOpts.fps, 
-    config.streamOpts.bitrateKbps, 
-    config.streamOpts.hardware_acc
-)
+const streamer = new Streamer(client);
 
 const prefix = '$';
 
@@ -31,15 +25,15 @@ let movies = movieFiles.map(file => {
 console.log(`Available movies:\n${movies.map(m => m.name).join('\n')}`);
 
 const status_idle = () =>  {
-    return new CustomStatus()
-    .setState('摸鱼进行中')
-    .setEmoji('🐟')
+    return new CustomStatus(client)
+        .setState('摸鱼进行中')
+        .setEmoji('🐟')
 }
 
 const status_watch = (name) => {
-    return new CustomStatus()
-    .setState(`Playing ${name}...`)
-    .setEmoji('📽')
+    return new CustomStatus(client)
+        .setState(`Playing ${name}...`)
+        .setEmoji('📽')
 }
 
 // ready event
@@ -89,6 +83,9 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     }
 })
 
+let controller: AbortController | null;
+let gCommand: ffmpeg.FfmpegCommand | null;
+
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return; // ignore bots
     if (message.author.id == client.user?.id) return; // ignore self
@@ -115,7 +112,8 @@ client.on('messageCreate', async (message) => {
                 }
 
                 // process args
-                const [guildId, channelId] = args.shift()!.split('/');
+                const guildId = message.guildId!;
+                const channelId = args.shift()!;
                 if (!guildId || !channelId) {
                     message.reply('Invalid voice channel');
                     return;
@@ -132,7 +130,7 @@ client.on('messageCreate', async (message) => {
                 
                 // get start time from args "hh:mm:ss"
                 let startTime = args.shift();
-                let options = {}
+                let ffoptions:string[] = []
                 // check if start time is valid
                 if (startTime) {
                     let time = startTime.split(':');
@@ -148,27 +146,82 @@ client.on('messageCreate', async (message) => {
                         return;
                     }
                     startTime = `${h}:${m}:${s}`;
-                    options['-ss'] = startTime;
+                    ffoptions.push("-ss"); // add start time to ffmpeg ffoptions
+                    ffoptions.push(startTime);
                     console.log("Start time: " + startTime);
                 }
 
-                await client.joinVoice(guildId, channelId);
+                controller?.abort();
+                gCommand?.kill();
+                await streamer.joinVoice(guildId, channelId);
+
+                controller = new AbortController();
+                
+                const { command, output } = prepareStream(movie.path, {
+                    width: config.streamOpts.width,
+                    height: config.streamOpts.height,
+                    frameRate: config.streamOpts.fps,
+                    bitrateVideo: config.streamOpts.bitrateKbps,
+                    bitrateVideoMax: config.streamOpts.maxBitrateKbps,
+                    hardwareAcceleratedDecoding: config.streamOpts.hardware_acc,
+                    videoCodec: Utils.normalizeVideoCodec(config.streamOpts.videoCodec),
+                    customFfmpegFlags: ffoptions
+                }, controller.signal);
+                gCommand = command;
+
+                command.on("error", (err) => {
+                    console.log("An error happened with ffmpeg");
+                    console.log(err);
+                });
+
+                message.reply('Playing ' + (startTime ? ` from ${startTime} ` : '') + moviename + '...');
+
                 streamStatus.joined = true;
-                streamStatus.playing = false;
+                streamStatus.playing = true;
                 streamStatus.starttime = startTime ? startTime : "00:00:00";
                 streamStatus.channelInfo = {
                     guildId: guildId,
                     channelId: channelId,
                     cmdChannelId: message.channel.id
                 }
-                const streamUdpConn = await client.createStream();
-                playVideo(movie.path, streamUdpConn, options);
-                message.reply('Playing ' + (startTime ? ` from ${startTime} ` : '') + moviename + '...');
-                client.user?.setActivity(status_watch(moviename) as ActivityOptions)
+                client.user?.setActivity(status_watch(moviename) as ActivityOptions);
+
+                gCommand?.on('progress', (msg) => {
+                    // print timemark if it passed 10 second sionce last print, becareful when it pass 0
+                    if (streamStatus.timemark) {
+                        if (lastPrint != "") {
+                            let last = lastPrint.split(':');
+                            let now = msg.timemark.split(':');
+                            // turn to seconds
+                            let s = parseInt(now[2]) + parseInt(now[1]) * 60 + parseInt(now[0]) * 3600;
+                            let l = parseInt(last[2]) + parseInt(last[1]) * 60 + parseInt(last[0]) * 3600;
+                            if (s - l >= 10) {
+                                console.log(`Timemark: ${msg.timemark}`);
+                                lastPrint = msg.timemark;
+                            }
+                        } else {
+                            console.log(`Timemark: ${msg.timemark}`);
+                            lastPrint = msg.timemark;
+                        }
+                    }
+                    streamStatus.timemark = msg.timemark;
+                });
+
+                await playStream(output, streamer, undefined, controller.signal)
+                    .catch(() => controller?.abort());
+
+                streamer.leaveVoice();
+                controller?.abort();
+                gCommand = null;
+                controller = null;
+                streamStatus.joined = false;
+                streamStatus.joinsucc = false;
+                streamStatus.playing = false;
+
                 break;
             case 'stop':
                 // Implement your stop playing logic here
-                client.leaveVoice()
+                streamer.leaveVoice();
                 streamStatus.joined = false;
                 streamStatus.joinsucc = false;
                 streamStatus.playing = false;
@@ -177,8 +230,8 @@ client.on('messageCreate', async (message) => {
                     channelId: '',
                     cmdChannelId: streamStatus.channelInfo.cmdChannelId
                 }
-                // use sigquit??
-                command?.kill("SIGINT");
+                
+                controller?.abort();
                 // msg
                 message.reply('Stopped playing');
             case 'playtime':
@@ -200,8 +253,8 @@ client.on('messageCreate', async (message) => {
                 message.reply(`Play time: ${h}:${m}:${s}`);
                 break;
             case 'pause':
-                if (!streamStatus.playing) {
-                    command?.kill("SIGSTOP");
+                if (streamStatus.playing) {
+                    gCommand?.kill("SIGSTOP");
                     message.reply('Paused');
                     streamStatus.playing = false;
                 } else {
@@ -210,7 +263,7 @@ client.on('messageCreate', async (message) => {
                 break;
             case 'resume':
                 if (!streamStatus.playing) {
-                    command?.kill("SIGCONT");
+                    gCommand?.kill("SIGCONT");
                     message.reply('Resumed');
                     streamStatus.playing = true;
                 } else {
@@ -246,57 +299,6 @@ client.on('messageCreate', async (message) => {
 client.login(config.token);
 
 let lastPrint = "";
-
-async function playVideo(video: string, udpConn: VoiceUdp, options: any) {
-    console.log("Started playing video");
-
-    udpConn.voiceConnection.setSpeaking(true);
-    udpConn.voiceConnection.setVideoStatus(true);
-    try {
-        let videoStream = streamLivestreamVideo(video, udpConn, options);
-        command?.on('progress', (msg) => {
-            // print timemark if it passed 10 second sionce last print, becareful when it pass 0
-            if (streamStatus.timemark) {
-                if (lastPrint != "") {
-                    let last = lastPrint.split(':');
-                    let now = msg.timemark.split(':');
-                    // turn to seconds
-                    let s = parseInt(now[2]) + parseInt(now[1]) * 60 + parseInt(now[0]) * 3600;
-                    let l = parseInt(last[2]) + parseInt(last[1]) * 60 + parseInt(last[0]) * 3600;
-                    if (s - l >= 10) {
-                        console.log(`Timemark: ${msg.timemark}`);
-                        lastPrint = msg.timemark;
-                    }
-                } else {
-                    console.log(`Timemark: ${msg.timemark}`);
-                    lastPrint = msg.timemark;
-                }
-            }
-            streamStatus.timemark = msg.timemark;
-        });
-        const res = await videoStream;
-        console.log("Finished playing video " + res);
-    } catch (e) {
-        console.log(e);
-    } finally {
-        udpConn.voiceConnection.setSpeaking(false);
-        udpConn.voiceConnection.setVideoStatus(false);
-    }
-    command?.kill("SIGINT");
-    // send message to channel, not reply
-    (client.channels.cache.get(streamStatus.channelInfo.cmdChannelId) as TextChannel).send('Finished playing video, timemark is ' + streamStatus.timemark);
-    client.leaveVoice();
-    client.user?.setActivity(status_idle() as ActivityOptions)
-    streamStatus.joined = false;
-    streamStatus.joinsucc = false;
-    streamStatus.playing = false;
-    lastPrint = ""
-    streamStatus.channelInfo = {
-        guildId: '',
-        channelId: '',
-        cmdChannelId: ''
-    }
-}
 
 // run server if enabled in config
 if (config.server.enabled) {

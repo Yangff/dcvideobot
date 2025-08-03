@@ -10,7 +10,9 @@
         "height": 720,
         "fps": 30,
         "bitrateKbps": 3000,
-        "hardware_acc": true
+        "maxBitrateKbps": 4500,
+        "hardware_acc": true,
+        "videoCodec": "H264"
     },
     "server": {
         "enabled": false,
